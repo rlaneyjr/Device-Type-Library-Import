@@ -86,3 +86,10 @@ venv/
 
 # VS Code
 .vscode/
+
+# Cloned devicetype-library repo (local development only)
+repo/
+
+# Kubernetes manifests
+*.yaml
+*.yml

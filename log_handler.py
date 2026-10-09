@@ -14,6 +14,7 @@ class LogHandler:
             "SSLError": f'SSL verification failed. IGNORE_SSL_ERRORS is {exception}. Set IGNORE_SSL_ERRORS to True if you want to ignore this error. EXITING.',
             "GitCommandError": f'The repo "{exception}" is not a valid git repo.',
             "GitInvalidRepositoryError": f'The repo "{exception}" is not a valid git repo.',
+            "VersionError": f'Unsupported NetBox version: {exception}',
             "Exception": f'An unknown error occurred: "{exception}"'
         }
 

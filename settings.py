@@ -10,7 +10,8 @@ REPO_URL = os.getenv("REPO_URL",
 REPO_BRANCH = os.getenv("REPO_BRANCH", default="master")
 NETBOX_URL = os.getenv("NETBOX_URL")
 NETBOX_TOKEN = os.getenv("NETBOX_TOKEN")
-IGNORE_SSL_ERRORS = (os.getenv("IGNORE_SSL_ERRORS", default="False") == "True")
+IGNORE_SSL_ERRORS = os.getenv("IGNORE_SSL_ERRORS", default="").strip().lower() in (
+    "true", "1", "yes", "on")
 REPO_PATH = f"{os.path.dirname(os.path.realpath(__file__))}/repo"
 
 # optionally load vendors through a comma separated list as env var
@@ -19,8 +20,13 @@ VENDORS = list(filter(None, os.getenv("VENDORS", "").split(",")))
 # optionally load device types through a space separated list as env var
 SLUGS = os.getenv("SLUGS", "").split()
 
+# optionally load rack types (default: enabled when supported by NetBox)
+RACK_TYPES = os.getenv("RACK_TYPES", default="true").strip().lower() in (
+    "true", "1", "yes", "on")
+
 NETBOX_FEATURES = {
-    'modules': False,
+    'modules': True,
+    'rack_types': RACK_TYPES,
 }
 
 parser = ArgumentParser(description='Import Netbox Device Types')
@@ -42,10 +48,10 @@ args.vendors = [v.casefold()
 args.slugs = [s for slug in args.slugs for s in slug.split(",") if s.strip()]
 
 handle = LogHandler(args)
-# Evaluate environment variables and exit if one of the mandatory ones are not set
-MANDATORY_ENV_VARS = ["REPO_URL", "NETBOX_URL", "NETBOX_TOKEN"]
+# Evaluate environment variables and exit if one of the mandatory ones is not set
+MANDATORY_ENV_VARS = ["NETBOX_URL", "NETBOX_TOKEN"]
 for var in MANDATORY_ENV_VARS:
-    if var not in os.environ:
+    if not os.environ.get(var):
         handle.exception("EnvironmentError", var,
                          f'Environment variable "{var}" is not set.\n\nMANDATORY_ENV_VARS: {str(MANDATORY_ENV_VARS)}.\n\nCURRENT_ENV_VARS: {str(os.environ)}')
 
