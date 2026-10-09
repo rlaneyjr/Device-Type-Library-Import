@@ -147,6 +147,24 @@ class NetBox:
                         f"Error '{e2.error}' creating manufacturer: "
                         f"{mfr.get('name', mfr)}")
 
+    def _normalize_manufacturer(self, entry):
+        """Resolve a device/module/rack type's manufacturer reference by slug.
+
+        The YAML ``manufacturer`` field casing can differ from the directory
+        name (e.g. "Unipi technology" vs "Unipi Technology").  NetBox matches on
+        both name and slug, so a case-only mismatch fails.  We look up the
+        stored manufacturer by slug and replace the reference with its numeric
+        ID, which is unambiguous.  Returns the canonical slug.
+        """
+        mfr = entry.get('manufacturer')
+        if not isinstance(mfr, dict):
+            return mfr
+        slug = mfr.get('slug')
+        existing = self.existing_manufacturers.get(slug)
+        if existing is not None:
+            entry['manufacturer'] = getattr(existing, 'id', existing)
+        return slug
+
     def ensure_module_type_profiles(self, profile_names):
         if not self.module_profiles_enabled or not profile_names:
             return
@@ -196,7 +214,7 @@ class NetBox:
                                 f"'{image_glob}'")
                     del device_type[i]
 
-            mfr_slug = device_type['manufacturer']['slug']
+            mfr_slug = self._normalize_manufacturer(device_type)
             model = device_type['model']
             cache_key = (mfr_slug, model)
 
@@ -293,7 +311,7 @@ class NetBox:
                 payload.pop('profile', None)
                 payload.pop('attribute_data', None)
 
-            mfr_slug = payload['manufacturer']['slug']
+            mfr_slug = self._normalize_manufacturer(payload)
             model = payload['model']
 
             try:
@@ -376,7 +394,7 @@ class NetBox:
 
         for rack_type in rack_types:
             rack_type.pop('src', None)
-            mfr_slug = rack_type['manufacturer']['slug']
+            mfr_slug = self._normalize_manufacturer(rack_type)
             model = rack_type['model']
             cache_key = (mfr_slug, model)
 
@@ -448,6 +466,38 @@ class DeviceTypes:
         for port in to_create:
             port['module_type'] = module_type
         return to_create
+
+    def _set_interface_bridges(self, created, existing, bridge_refs):
+        """Resolve the self-referential ``bridge`` field on interface templates.
+
+        The YAML expresses ``bridge`` as the *name* of another interface in the
+        same device/module type (e.g. ``backplane0``).  NetBox requires either a
+        numeric ID or an attribute dict, so after interfaces are created we
+        build a name → interface mapping and update each referencing interface
+        with the resolved ID.
+        """
+        if not bridge_refs:
+            return
+
+        name_to_iface = {str(item): item for item in
+                         (created if isinstance(created, list) else [created])}
+        name_to_iface.update(existing)
+
+        for name, bridge_name in bridge_refs.items():
+            iface = name_to_iface.get(name)
+            target = name_to_iface.get(bridge_name)
+            if not iface or not target:
+                self.handle.log(
+                    f'Could not resolve bridge for interface {name}: '
+                    f'{bridge_name}')
+                continue
+            try:
+                iface.update({'bridge': target.id})
+                self.handle.verbose_log(
+                    f'Bridge set: {name} -> {bridge_name} ({target.id})')
+            except pynetbox.RequestError as excep:
+                self.handle.log(
+                    f"Error '{excep.error}' setting bridge on interface {name}")
 
     # ------------------------------------------------------------------ #
     # Front port rear-mapping resolution (NetBox >= 4.5 vs < 4.5)
@@ -556,12 +606,18 @@ class DeviceTypes:
             **{'device_type_id' if self.new_filters else 'devicetype_id': device_type})}
         to_create = self.get_device_type_ports_to_create(
             interfaces, device_type, existing)
+        bridge_refs = {port['name']: port['bridge'] for port in to_create
+                       if port.get('bridge')}
+        for port in to_create:
+            port.pop('bridge', None)
         if to_create:
             try:
+                created = self.netbox.dcim.interface_templates.create(to_create)
                 self.counter.update({'updated':
                     self.handle.log_device_ports_created(
-                        self.netbox.dcim.interface_templates.create(to_create),
-                        "Interface")})
+                        created, "Interface")})
+                self._set_interface_bridges(
+                    created, existing, bridge_refs)
             except pynetbox.RequestError as excep:
                 self.handle.log(f"Error '{excep.error}' creating Interface")
 
@@ -700,12 +756,18 @@ class DeviceTypes:
             **{'module_type_id' if self.new_filters else 'moduletype_id': module_type})}
         to_create = self.get_module_type_ports_to_create(
             module_interfaces, module_type, existing)
+        bridge_refs = {port['name']: port['bridge'] for port in to_create
+                       if port.get('bridge')}
+        for port in to_create:
+            port.pop('bridge', None)
         if to_create:
             try:
+                created = self.netbox.dcim.interface_templates.create(to_create)
                 self.counter.update({'updated':
                     self.handle.log_module_ports_created(
-                        self.netbox.dcim.interface_templates.create(to_create),
-                        "Module Interface")})
+                        created, "Module Interface")})
+                self._set_interface_bridges(
+                    created, existing, bridge_refs)
             except pynetbox.RequestError as excep:
                 self.handle.log(
                     f"Error '{excep.error}' creating Module Interface")
